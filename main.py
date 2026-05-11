@@ -21,7 +21,7 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
-from config import is_llm_dry_run
+from config import GROQ_MODEL, GEMINI_MODEL, active_llm_provider, is_llm_dry_run
 from db.session import init_db
 from graph.graph_builder import build_graph
 from graph.state import TeamMemberDict
@@ -50,11 +50,17 @@ def build_initial_state(
 
 
 def main() -> None:
-    print(
-        "LLM:",
-        "dry_run (no Gemini calls)" if is_llm_dry_run() else "live (Gemini)",
-        file=sys.stderr,
-    )
+    if is_llm_dry_run():
+        line = "LLM: dry_run (no API calls)"
+    else:
+        p = active_llm_provider()
+        if p == "groq":
+            line = f"LLM: live (Groq / {GROQ_MODEL})"
+        elif p == "gemini":
+            line = f"LLM: live (Gemini / {GEMINI_MODEL})"
+        else:
+            line = "LLM: live (no provider key — set GROQ_API_KEY)"
+    print(line, file=sys.stderr)
     init_db()
     graph = build_graph()
     state = build_initial_state(

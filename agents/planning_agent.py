@@ -116,32 +116,31 @@ Use task_id values from backlog/context when possible; if unknown, use title mat
             limit = int(args.get("limit") or 50)
             prio_order = {"P1": 0, "P2": 1, "P3": 2, "P4": 3, None: 9}
 
+            snapshots: list[dict[str, Any]] = []
             with session_scope() as s:
                 stmt = (
                     select(TaskRow)
                     .where(TaskRow.project_id == project_id, TaskRow.status == "backlog")
                     .limit(limit * 3)
                 )
-                rows = list(s.scalars(stmt).all())
-            rows.sort(key=lambda t: (prio_order.get(t.priority, 9), t.title))
-            rows = rows[:limit]
-            return {
-                "backlog": [
-                    {
-                        "task_id": r.id,
-                        "title": r.title,
-                        "priority": r.priority,
-                        "story_points": r.story_points,
-                        "labels": r.labels or [],
-                        "estimated_hours": r.estimated_hours,
-                        "has_acceptance_criteria": bool(r.acceptance_criteria),
-                    }
-                    for r in rows
-                ]
-            }
+                for r in s.scalars(stmt):
+                    snapshots.append(
+                        {
+                            "task_id": r.id,
+                            "title": r.title,
+                            "priority": r.priority,
+                            "story_points": r.story_points,
+                            "labels": list(r.labels or []),
+                            "estimated_hours": r.estimated_hours,
+                            "has_acceptance_criteria": bool(r.acceptance_criteria),
+                        }
+                    )
+            snapshots.sort(key=lambda x: (prio_order.get(x["priority"], 9), x["title"] or ""))
+            return {"backlog": snapshots[:limit]}
 
         if name == "get_velocity_history":
             n = int(args.get("last_n_sprints") or 5)
+            records: list[dict[str, Any]] = []
             with session_scope() as s:
                 stmt = (
                     select(VelocityHistoryRow)
@@ -149,18 +148,17 @@ Use task_id values from backlog/context when possible; if unknown, use title mat
                     .order_by(VelocityHistoryRow.created_at.desc())
                     .limit(n)
                 )
-                history = list(s.scalars(stmt).all())
-            records = [
-                {
-                    "sprint_id": h.sprint_id,
-                    "planned_points": h.planned_points,
-                    "completed_points": h.completed_points,
-                    "completion_rate": round(h.completed_points / h.planned_points, 2)
-                    if h.planned_points
-                    else 0.0,
-                }
-                for h in history
-            ]
+                for h in s.scalars(stmt):
+                    records.append(
+                        {
+                            "sprint_id": h.sprint_id,
+                            "planned_points": h.planned_points,
+                            "completed_points": h.completed_points,
+                            "completion_rate": round(h.completed_points / h.planned_points, 2)
+                            if h.planned_points
+                            else 0.0,
+                        }
+                    )
             avg = (
                 round(sum(r["completed_points"] for r in records) / len(records), 1) if records else 0.0
             )

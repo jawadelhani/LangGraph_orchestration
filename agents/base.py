@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from config import is_llm_dry_run
-from llm.gemini_client import LLMQuotaError, call_gemini
+from llm.llm_client import LLMQuotaError, call_llm
 
 
 class BaseAgent(ABC):
@@ -37,7 +37,7 @@ class BaseAgent(ABC):
             f"User message:\n{user_input}\n"
         )
         try:
-            raw = call_gemini(prompt)
+            raw = call_llm(prompt)
         except LLMQuotaError as e:
             return {"raw_output": "", "llm_error": str(e)}
         return {"raw_output": raw}

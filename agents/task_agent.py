@@ -97,20 +97,21 @@ Return ONLY valid JSON (no markdown), exactly:
         if name == "search_existing_tasks":
             project_id = str(args["project_id"])
             query = str(args["query"]).lower().strip()
+            matches: list[dict[str, Any]] = []
             with session_scope() as s:
                 stmt = select(TaskRow).where(TaskRow.project_id == project_id).limit(500)
-                rows = list(s.scalars(stmt).all())
-            matches = []
-            for t in rows:
-                if query in t.title.lower() or (t.description and query in t.description.lower()):
-                    matches.append(
-                        {
-                            "id": t.id,
-                            "title": t.title,
-                            "status": t.status,
-                            "priority": t.priority,
-                        }
-                    )
+                for t in s.scalars(stmt):
+                    title_l = (t.title or "").lower()
+                    desc_l = (t.description or "").lower()
+                    if query in title_l or (t.description and query in desc_l):
+                        matches.append(
+                            {
+                                "id": t.id,
+                                "title": t.title,
+                                "status": t.status,
+                                "priority": t.priority,
+                            }
+                        )
             return {"matches": matches, "total_found": len(matches)}
 
         if name == "get_project_context":
