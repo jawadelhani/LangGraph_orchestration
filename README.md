@@ -57,7 +57,3 @@ python main.py
 ```
 
 Stderr shows e.g. `LLM: live (Groq / llama-3.3-70b-versatile)` or `LLM: dry_run (no API calls)`.
-
-## Security
-
-Never commit `.env` or paste API keys in chat. If a key was exposed, **revoke it** in the provider console and create a new one.
