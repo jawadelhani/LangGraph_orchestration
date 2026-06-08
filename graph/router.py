@@ -8,4 +8,6 @@ def route(state: AgentState):
     # LLM sometimes returns the string "end" instead of the END constant
     if nxt in ("end", None, ""):
         return END
-    return nxt
+    if nxt in ("task", "planning", "assignment"):
+        return nxt
+    return END

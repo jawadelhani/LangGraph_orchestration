@@ -1,16 +1,8 @@
-"""Single entry for chat completions: Groq (default) or Gemini."""
+"""Single entry for chat completions: Groq only."""
 
 from __future__ import annotations
 
-from config import (
-    GEMINI_API_KEY,
-    GEMINI_MODEL,
-    GROQ_API_KEY,
-    GROQ_BASE_URL,
-    GROQ_MODEL,
-    active_llm_provider,
-    is_llm_dry_run,
-)
+from config import GROQ_API_KEY, GROQ_BASE_URL, GROQ_MODEL, is_llm_dry_run
 
 
 class LLMQuotaError(RuntimeError):
@@ -22,16 +14,11 @@ def call_llm(prompt: str) -> str:
     if is_llm_dry_run():
         raise RuntimeError("call_llm must not run in dry_run mode.")
 
-    provider = active_llm_provider()
-    if provider == "none":
+    if not GROQ_API_KEY:
         raise RuntimeError(
-            "No LLM API key. Set GROQ_API_KEY (recommended) or GEMINI_API_KEY in .env, "
-            "or use LLM_MODE=dry_run."
+            "No Groq API key. Set GROQ_API_KEY in .env, or use LLM_MODE=dry_run."
         )
-
-    if provider == "groq":
-        return _call_groq(prompt)
-    return _call_gemini(prompt)
+    return _call_groq(prompt)
 
 
 def _call_groq(prompt: str) -> str:
@@ -59,27 +46,3 @@ def _call_groq(prompt: str) -> str:
 
     text = resp.choices[0].message.content
     return (text or "").strip()
-
-
-def _call_gemini(prompt: str) -> str:
-    if not GEMINI_API_KEY:
-        raise RuntimeError("GEMINI_API_KEY is not set.")
-
-    import google.generativeai as genai
-    from google.api_core.exceptions import ResourceExhausted
-
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel(GEMINI_MODEL)
-    try:
-        resp = model.generate_content(prompt)
-    except ResourceExhausted as e:
-        raise LLMQuotaError(
-            "Gemini quota exceeded (429). Prefer Groq: set GROQ_API_KEY and LLM_PROVIDER=groq. "
-            "https://ai.google.dev/gemini-api/docs/rate-limits"
-        ) from e
-    return (resp.text or "").strip()
-
-
-# Backwards compatibility
-def call_gemini(prompt: str) -> str:
-    return call_llm(prompt)

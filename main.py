@@ -21,7 +21,8 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
-from config import GROQ_MODEL, GEMINI_MODEL, active_llm_provider, is_llm_dry_run
+from config import GROQ_MODEL, is_llm_dry_run
+from db.persist import ensure_project, ensure_users
 from db.session import init_db
 from graph.graph_builder import build_graph
 from graph.state import TeamMemberDict
@@ -53,13 +54,7 @@ def main() -> None:
     if is_llm_dry_run():
         line = "LLM: dry_run (no API calls)"
     else:
-        p = active_llm_provider()
-        if p == "groq":
-            line = f"LLM: live (Groq / {GROQ_MODEL})"
-        elif p == "gemini":
-            line = f"LLM: live (Gemini / {GEMINI_MODEL})"
-        else:
-            line = "LLM: live (no provider key — set GROQ_API_KEY)"
+        line = f"LLM: live (Groq / {GROQ_MODEL})"
     print(line, file=sys.stderr)
     init_db()
     graph = build_graph()
@@ -67,6 +62,9 @@ def main() -> None:
         "We need a login page with OAuth. Plan the sprint and assign tasks to the team.",
         project_id="demo-project",
     )
+    # FK safety: make sure referenced rows exist
+    ensure_project(state["project_id"], name="Demo project")
+    ensure_users(state["team_members"])
     out = graph.invoke(state, {"recursion_limit": 25})
     keys = ("backlog", "sprint_plan", "assignments", "sprint_goal", "planning_extra", "assignment_extra", "error")
     print(json.dumps({k: out.get(k) for k in keys}, indent=2, default=str))

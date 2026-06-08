@@ -99,7 +99,7 @@ Return ONLY valid JSON (no markdown), exactly:
             query = str(args["query"]).lower().strip()
             matches: list[dict[str, Any]] = []
             with session_scope() as s:
-                stmt = select(TaskRow).where(TaskRow.project_id == project_id).limit(500)
+                stmt = select(TaskRow).where(TaskRow.projectId == project_id).limit(500)
                 for t in s.scalars(stmt):
                     title_l = (t.title or "").lower()
                     desc_l = (t.description or "").lower()
@@ -117,7 +117,7 @@ Return ONLY valid JSON (no markdown), exactly:
         if name == "get_project_context":
             project_id = str(args["project_id"])
             with session_scope() as s:
-                n = s.scalar(select(func.count()).select_from(TaskRow).where(TaskRow.project_id == project_id))
+                n = s.scalar(select(func.count()).select_from(TaskRow).where(TaskRow.projectId == project_id))
             return {
                 "project_id": project_id,
                 "open_task_count": int(n or 0),

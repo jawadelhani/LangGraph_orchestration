@@ -16,7 +16,7 @@ from sqlalchemy import select
 
 from agents.base import BaseAgent
 from config import is_llm_dry_run
-from db.models import TaskRow, VelocityHistoryRow
+from db.models import TaskRow
 from db.persist import save_sprint_plan
 from db.session import session_scope
 from graph.state import AgentState, TaskDict
@@ -85,18 +85,6 @@ Use task_id values from backlog/context when possible; if unknown, use title mat
                 },
             },
             {
-                "name": "get_velocity_history",
-                "description": "Last N sprints velocity for the project.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "project_id": {"type": "string"},
-                        "last_n_sprints": {"type": "integer"},
-                    },
-                    "required": ["project_id"],
-                },
-            },
-            {
                 "name": "get_team_capacity",
                 "description": "Team capacity for the upcoming sprint (story points).",
                 "parameters": {
@@ -120,7 +108,7 @@ Use task_id values from backlog/context when possible; if unknown, use title mat
             with session_scope() as s:
                 stmt = (
                     select(TaskRow)
-                    .where(TaskRow.project_id == project_id, TaskRow.status == "backlog")
+                    .where(TaskRow.projectId == project_id, TaskRow.status.in_(["BACKLOG", "backlog"]))
                     .limit(limit * 3)
                 )
                 for r in s.scalars(stmt):
@@ -129,40 +117,14 @@ Use task_id values from backlog/context when possible; if unknown, use title mat
                             "task_id": r.id,
                             "title": r.title,
                             "priority": r.priority,
-                            "story_points": r.story_points,
+                            "story_points": r.storyPoints,
                             "labels": list(r.labels or []),
-                            "estimated_hours": r.estimated_hours,
-                            "has_acceptance_criteria": bool(r.acceptance_criteria),
+                            "estimated_hours": r.estimatedHours,
+                            "has_acceptance_criteria": bool(r.acceptanceCriteria),
                         }
                     )
             snapshots.sort(key=lambda x: (prio_order.get(x["priority"], 9), x["title"] or ""))
             return {"backlog": snapshots[:limit]}
-
-        if name == "get_velocity_history":
-            n = int(args.get("last_n_sprints") or 5)
-            records: list[dict[str, Any]] = []
-            with session_scope() as s:
-                stmt = (
-                    select(VelocityHistoryRow)
-                    .where(VelocityHistoryRow.project_id == project_id)
-                    .order_by(VelocityHistoryRow.created_at.desc())
-                    .limit(n)
-                )
-                for h in s.scalars(stmt):
-                    records.append(
-                        {
-                            "sprint_id": h.sprint_id,
-                            "planned_points": h.planned_points,
-                            "completed_points": h.completed_points,
-                            "completion_rate": round(h.completed_points / h.planned_points, 2)
-                            if h.planned_points
-                            else 0.0,
-                        }
-                    )
-            avg = (
-                round(sum(r["completed_points"] for r in records) / len(records), 1) if records else 0.0
-            )
-            return {"velocity_history": records, "average_velocity": avg}
 
         if name == "get_team_capacity":
             sprint_days = int(args.get("sprint_duration_days") or 10)
@@ -198,9 +160,6 @@ Use task_id values from backlog/context when possible; if unknown, use title mat
         ctx = dict(context or {})
         project_id = str(ctx.get("project_id") or "default")
         ctx["tool_get_backlog"] = self.execute_tool("get_backlog", {"project_id": project_id, "limit": 50})
-        ctx["tool_velocity"] = self.execute_tool(
-            "get_velocity_history", {"project_id": project_id, "last_n_sprints": 5}
-        )
         cap_args = {"project_id": project_id, "sprint_duration_days": 10, "_context": ctx}
         ctx["tool_capacity"] = self.execute_tool("get_team_capacity", cap_args)
         return super().run(user_input, ctx)

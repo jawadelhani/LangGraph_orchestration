@@ -102,17 +102,17 @@ Cover every sprint task id from Context.
         if name == "get_team_workload":
             project_id = str(args["project_id"])
             ctx = args.get("_context") or {}
-            active_statuses = ("backlog", "todo", "in_progress")
+            active_statuses = ("backlog", "todo", "in_progress", "BACKLOG", "TODO", "IN_PROGRESS")
             by_member: dict[str, list[str]] = {}
             points_by_member: dict[str, int] = {}
             with session_scope() as s:
-                stmt = select(TaskRow).where(TaskRow.project_id == project_id).limit(2000)
+                stmt = select(TaskRow).where(TaskRow.projectId == project_id).limit(2000)
                 for t in s.scalars(stmt):
-                    if t.status not in active_statuses or not t.assignee_id:
+                    if t.status not in active_statuses or not t.assigneeId:
                         continue
-                    aid = t.assignee_id
+                    aid = t.assigneeId
                     by_member.setdefault(aid, []).append(t.id)
-                    points_by_member[aid] = points_by_member.get(aid, 0) + int(t.story_points or 0)
+                    points_by_member[aid] = points_by_member.get(aid, 0) + int(t.storyPoints or 0)
             members_meta = {m["id"]: m for m in (ctx.get("team_members") or [])}
             workload = []
             for mid, meta in members_meta.items():
@@ -156,8 +156,8 @@ Cover every sprint task id from Context.
                     "description": t.description,
                     "labels": t.labels or [],
                     "priority": t.priority,
-                    "story_points": t.story_points,
-                    "estimated_hours": t.estimated_hours,
+                    "story_points": t.storyPoints,
+                    "estimated_hours": t.estimatedHours,
                 }
 
         return super().execute_tool(name, args)
