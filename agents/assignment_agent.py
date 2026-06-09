@@ -267,5 +267,6 @@ def assignment_node(state: AgentState) -> dict[str, Any]:
         "warnings": data.get("warnings") if isinstance(data, dict) else [],
         "action": data.get("action") if isinstance(data, dict) else None,
     }
-    save_assignments(assignments)
+    if not state.get("skip_db_write"):
+        save_assignments(assignments)
     return {"assignments": assignments, "assignment_extra": extra, "error": None}

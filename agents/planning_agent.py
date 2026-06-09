@@ -42,11 +42,16 @@ Task selection rules:
 - Prefer higher priority (P1 before P4).
 - Leave room for unplanned work (capacity already reflects buffer in Context when present).
 
+Sprint naming:
+- name MUST be a short, human-readable title derived from the sprint goal or main theme of selected tasks.
+- Do NOT use placeholders like "Sprint N", "Sprint 1", or generic numbered names.
+- Examples: "Payment Processing MVP", "OAuth Login & Session Security", "Admin Analytics Dashboard".
+
 Return ONLY valid JSON (no markdown), exactly:
 {
   "action": "plan_sprint",
   "sprint": {
-    "name": "Sprint N",
+    "name": "Short theme-based sprint title",
     "goal": "...",
     "start_date": null,
     "end_date": null,
@@ -105,24 +110,41 @@ Use task_id values from backlog/context when possible; if unknown, use title mat
             prio_order = {"P1": 0, "P2": 1, "P3": 2, "P4": 3, None: 9}
 
             snapshots: list[dict[str, Any]] = []
-            with session_scope() as s:
-                stmt = (
-                    select(TaskRow)
-                    .where(TaskRow.projectId == project_id, TaskRow.status.in_(["BACKLOG", "backlog"]))
-                    .limit(limit * 3)
-                )
-                for r in s.scalars(stmt):
+            ctx = args.get("_context") or {}
+            backlog_from_state = ctx.get("backlog_from_state") or []
+
+            if backlog_from_state:
+                for t in backlog_from_state:
                     snapshots.append(
                         {
-                            "task_id": r.id,
-                            "title": r.title,
-                            "priority": r.priority,
-                            "story_points": r.storyPoints,
-                            "labels": list(r.labels or []),
-                            "estimated_hours": r.estimatedHours,
-                            "has_acceptance_criteria": bool(r.acceptanceCriteria),
+                            "task_id": t.get("id"),
+                            "title": t.get("title"),
+                            "priority": t.get("priority"),
+                            "story_points": t.get("story_points"),
+                            "labels": list(t.get("labels") or []),
+                            "estimated_hours": t.get("estimated_hours"),
+                            "has_acceptance_criteria": bool(t.get("acceptance_criteria")),
                         }
                     )
+            else:
+                with session_scope() as s:
+                    stmt = (
+                        select(TaskRow)
+                        .where(TaskRow.projectId == project_id, TaskRow.status.in_(["BACKLOG"]))
+                        .limit(limit * 3)
+                    )
+                    for r in s.scalars(stmt):
+                        snapshots.append(
+                            {
+                                "task_id": r.id,
+                                "title": r.title,
+                                "priority": r.priority,
+                                "story_points": r.storyPoints,
+                                "labels": list(r.labels or []),
+                                "estimated_hours": r.estimatedHours,
+                                "has_acceptance_criteria": bool(r.acceptanceCriteria),
+                            }
+                        )
             snapshots.sort(key=lambda x: (prio_order.get(x["priority"], 9), x["title"] or ""))
             return {"backlog": snapshots[:limit]}
 
@@ -159,10 +181,81 @@ Use task_id values from backlog/context when possible; if unknown, use title mat
     def run(self, user_input: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
         ctx = dict(context or {})
         project_id = str(ctx.get("project_id") or "default")
-        ctx["tool_get_backlog"] = self.execute_tool("get_backlog", {"project_id": project_id, "limit": 50})
+        ctx["tool_get_backlog"] = self.execute_tool(
+            "get_backlog", {"project_id": project_id, "limit": 50, "_context": ctx}
+        )
         cap_args = {"project_id": project_id, "sprint_duration_days": 10, "_context": ctx}
         ctx["tool_capacity"] = self.execute_tool("get_team_capacity", cap_args)
         return super().run(user_input, ctx)
+
+
+def _is_generic_sprint_name(name: str | None) -> bool:
+    if not name:
+        return True
+    import re
+
+    normalized = name.strip().lower()
+    placeholders = {
+        "sprint",
+        "sprint n",
+        "sprint 1",
+        "short theme-based sprint title",
+        "upcoming sprint",
+    }
+    if normalized in placeholders:
+        return True
+    if re.fullmatch(r"sprint\s*[#n\d]*", normalized):
+        return True
+    return len(normalized) <= 8 and normalized.startswith("sprint")
+
+
+def _derive_sprint_name(goal: str | None, tasks: list[TaskDict]) -> str:
+    if goal:
+        title = goal.strip().rstrip(".")
+        if len(title) > 55:
+            return title[:52] + "..."
+        return title
+    if tasks:
+        first = str(tasks[0].get("title") or "").strip()
+        if first:
+            prefix = "Sprint: "
+            max_len = 55 - len(prefix)
+            return prefix + (first[:max_len] + "..." if len(first) > max_len else first)
+    return "Upcoming Sprint"
+
+
+def _enrich_sprint_block(
+    sprint_block: dict[str, Any],
+    *,
+    goal: str | None,
+    sprint_plan: list[TaskDict],
+    team_members: list[dict[str, Any]] | None,
+    project_id: str,
+) -> dict[str, Any]:
+    block = dict(sprint_block)
+    planned = sum(int(t.get("story_points") or 0) for t in sprint_plan)
+    if sprint_plan:
+        block["planned_points"] = planned
+    elif not block.get("planned_points"):
+        block["planned_points"] = 0
+
+    if not block.get("total_capacity_points"):
+        cap = PlanningAgent().execute_tool(
+            "get_team_capacity",
+            {
+                "project_id": project_id,
+                "sprint_duration_days": 10,
+                "_context": {"team_members": team_members or []},
+            },
+        )
+        block["total_capacity_points"] = cap.get("total_capacity_points", 0)
+        if not block.get("buffer_points"):
+            block["buffer_points"] = cap.get("buffer_points", 0)
+
+    if _is_generic_sprint_name(block.get("name")):
+        block["name"] = _derive_sprint_name(goal, sprint_plan)
+
+    return block
 
 
 def _dry_planning_payload(stories: list[TaskDict]) -> dict[str, Any]:
@@ -180,11 +273,12 @@ def _dry_planning_payload(stories: list[TaskDict]) -> dict[str, Any]:
                 "reason_included": "dry_run: included all backlog items",
             }
         )
+    goal = "Deliver the backlog slice with a working increment."
     return {
         "action": "plan_sprint",
         "sprint": {
-            "name": "Sprint 1 (dry-run)",
-            "goal": "Deliver the backlog slice with a working increment.",
+            "name": _derive_sprint_name(goal, stories),
+            "goal": goal,
             "start_date": None,
             "end_date": None,
             "total_capacity_points": 40,
@@ -261,6 +355,14 @@ def planning_node(state: AgentState) -> dict[str, Any]:
 
     sprint_block = data.get("sprint") if isinstance(data.get("sprint"), dict) else {}
     goal = sprint_block.get("goal") if isinstance(sprint_block, dict) else None
+    sprint_block = _enrich_sprint_block(
+        sprint_block,
+        goal=goal,
+        sprint_plan=sprint_plan,
+        team_members=state.get("team_members"),
+        project_id=project_id,
+    )
+    goal = sprint_block.get("goal") or goal
     planning_extra = {
         "excluded_tasks": data.get("excluded_tasks") if isinstance(data, dict) else [],
         "tasks_to_split": data.get("tasks_to_split") if isinstance(data, dict) else [],
@@ -268,7 +370,8 @@ def planning_node(state: AgentState) -> dict[str, Any]:
         "sprint": sprint_block,
         "unmatched_selected": unmatched,
     }
-    save_sprint_plan(sprint_plan, project_id=project_id, goal=goal, meta=planning_extra)
+    if not state.get("skip_db_write"):
+        save_sprint_plan(sprint_plan, project_id=project_id, goal=goal, meta=planning_extra)
     return {
         "sprint_plan": sprint_plan,
         "sprint_goal": goal,

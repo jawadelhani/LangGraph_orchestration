@@ -36,4 +36,5 @@ class AgentState(TypedDict, total=False):
     sprint_goal: NotRequired[Optional[str]]
     planning_extra: NotRequired[dict[str, Any] | None]
     assignment_extra: NotRequired[dict[str, Any] | None]
+    skip_db_write: NotRequired[bool]
     error: Optional[str]

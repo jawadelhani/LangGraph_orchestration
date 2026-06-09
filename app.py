@@ -7,6 +7,7 @@ import uuid
 from graph.graph_builder import build_graph
 from main import build_initial_state
 from db.persist import ensure_project, ensure_users, map_priority
+from agents.planning_agent import _derive_sprint_name, _is_generic_sprint_name
 
 app = FastAPI(
     title="AgileAI Agent Orchestration API",
@@ -33,6 +34,7 @@ class OrchestratePayload(BaseModel):
     user_input: str
     project_id: str = "default"
     team_members: Optional[List[TeamMemberInput]] = None
+    skip_db_write: bool = True
 
 @app.get("/")
 def read_root():
@@ -65,6 +67,7 @@ def orchestrate(payload: OrchestratePayload):
             project_id=payload.project_id,
             team_members=team_list
         )
+        state["skip_db_write"] = payload.skip_db_write
 
         # 4. Invoke the LangGraph workflow
         graph = build_graph()
@@ -95,25 +98,56 @@ def orchestrate(payload: OrchestratePayload):
         sprint_block = planning_extra.get("sprint") or {}
         sprint_plan_resp = None
         if sprint_plan_tasks or sprint_goal:
+            goal_text = sprint_goal or sprint_block.get("goal") or ""
+            sprint_name = sprint_block.get("name")
+            if _is_generic_sprint_name(sprint_name):
+                sprint_name = _derive_sprint_name(goal_text, sprint_plan_tasks)
+            planned_from_tasks = sum(
+                int(t.get("story_points") or 0) for t in sprint_plan_tasks
+            )
+            planned_points = (
+                planned_from_tasks
+                if planned_from_tasks > 0
+                else int(sprint_block.get("planned_points") or 0)
+            )
             sprint_plan_resp = {
-                "name": sprint_block.get("name") or "Sprint 1",
-                "goal": sprint_goal or sprint_block.get("goal") or "",
+                "name": sprint_name or "Upcoming Sprint",
+                "goal": goal_text,
                 "totalCapacityPoints": int(sprint_block.get("total_capacity_points") or 0),
-                "plannedPoints": int(sprint_block.get("planned_points") or 0),
+                "plannedPoints": planned_points,
                 "bufferPoints": int(sprint_block.get("buffer_points") or 0),
                 "color": sprint_block.get("color") or "#0052CC",
                 "status": "DRAFT"
             }
 
+        # Format assignments to align with agents.Assignment in Prisma
+        formatted_assignments = []
+        assignment_list = assignment_extra.get("assignments") or []
+        for ass in assignment_list:
+            formatted_assignments.append({
+                "taskId": ass.get("task_id"),
+                "projectId": payload.project_id,
+                "assigneeId": ass.get("assigned_to", {}).get("user_id"),
+                "reviewerId": ass.get("reviewer", {}).get("user_id"),
+                "assigneeReason": ass.get("assigned_to", {}).get("reason"),
+                "reviewerReason": ass.get("reviewer", {}).get("reason"),
+                "applied": True
+            })
+
+        assignment_by_task = {
+            a["taskId"]: a for a in formatted_assignments if a.get("taskId")
+        }
+
         # Format tasks to align with agents.Task in Prisma
         formatted_tasks = []
         for tid, t in all_tasks_by_id.items():
+            assignment = assignment_by_task.get(tid) or {}
             formatted_tasks.append({
                 "id": t.get("id"),
                 "projectId": payload.project_id,
                 "sprintPlanId": t.get("sprint_plan_id"),
-                "assigneeId": t.get("assignee_id"),
-                "reviewerId": t.get("reviewer_id"),
+                "assigneeId": t.get("assignee_id") or assignment.get("assigneeId"),
+                "reviewerId": t.get("reviewer_id") or assignment.get("reviewerId"),
                 "reporterId": "system",
                 "creatorId": "system",
                 "title": t.get("title", ""),
@@ -133,20 +167,6 @@ def orchestrate(payload: OrchestratePayload):
                 "blockedReason": None,
                 "aiGenerated": True,
                 "key": t.get("key") or f"{payload.project_id.upper()[:10]}-{tid[:4]}"
-            })
-
-        # Format assignments to align with agents.Assignment in Prisma
-        formatted_assignments = []
-        assignment_list = assignment_extra.get("assignments") or []
-        for ass in assignment_list:
-            formatted_assignments.append({
-                "taskId": ass.get("task_id"),
-                "projectId": payload.project_id,
-                "assigneeId": ass.get("assigned_to", {}).get("user_id"),
-                "reviewerId": ass.get("reviewer", {}).get("user_id"),
-                "assigneeReason": ass.get("assigned_to", {}).get("reason"),
-                "reviewerReason": ass.get("reviewer", {}).get("reason"),
-                "applied": True
             })
 
         # Format next_actions

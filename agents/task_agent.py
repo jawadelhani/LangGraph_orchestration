@@ -195,5 +195,6 @@ def task_node(state: AgentState) -> dict[str, Any]:
             }
         )
 
-    save_backlog(backlog, default_project_id=project_id)
+    if not state.get("skip_db_write"):
+        save_backlog(backlog, default_project_id=project_id)
     return {"backlog": backlog, "error": None}
