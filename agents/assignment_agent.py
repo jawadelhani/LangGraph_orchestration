@@ -39,9 +39,10 @@ Your responsibilities:
 5. Recommend the next task each user should pick up.
 
 Assignment logic:
-- Avoid assigning to members at or over capacity (>= 8 points in workload snapshot unless Context says otherwise).
+- Prefer members with available_points > 0. If ALL members are at or over capacity, assign to the member with the lowest load anyway — never leave a task unassigned.
 - Prefer skill fit, then lower load.
 - Reviewer must differ from assignee when possible.
+- You MUST include an assignment for EVERY task_id listed in Context.sprint_plan. Never omit a task.
 
 Return ONLY valid JSON (no markdown), exactly:
 {
@@ -261,8 +262,28 @@ def assignment_node(state: AgentState) -> dict[str, Any]:
             if rid:
                 by_task[tid]["reviewer_id"] = str(rid)
 
+    # Fallback: round-robin assign any sprint task the LLM missed
+    assigned_ids = {row.get("task_id") for row in rows}
+    unassigned = [t for t in sprint if t.get("id") and t["id"] not in assigned_ids]
+    if unassigned and team:
+        for i, t in enumerate(unassigned):
+            assignee = team[i % len(team)]
+            reviewer = team[(i + 1) % len(team)]
+            fallback_row = {
+                "task_id": t["id"],
+                "task_title": t.get("title"),
+                "assigned_to": {"user_id": assignee["id"], "name": assignee.get("name", ""), "reason": "fallback: round-robin"},
+                "reviewer": {"user_id": reviewer["id"], "name": reviewer.get("name", ""), "reason": "fallback: next teammate"},
+            }
+            rows.append(fallback_row)
+            tid = t["id"]
+            if tid in by_task:
+                by_task[tid]["assignee_id"] = str(assignee["id"])
+                by_task[tid]["reviewer_id"] = str(reviewer["id"])
+
     assignments: list[TaskDict] = list(by_task.values())
     extra = {
+        "assignments": rows,  # raw LLM rows needed by app.py to build formatted_assignments
         "next_actions": data.get("next_actions") if isinstance(data, dict) else [],
         "warnings": data.get("warnings") if isinstance(data, dict) else [],
         "action": data.get("action") if isinstance(data, dict) else None,
